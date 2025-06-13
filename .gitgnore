@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.env
+.vscode/
+
+# Flask
+instance/
+
+# Flask-specific static/media files that are generated and not part of the source
+static/*.png
+static/*.jpg
+static/*.jpeg
+static/*.gif
+
+# OS generated files
+.DS_Store
+.Trash

@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Geopolitical Map (Web)</title>
+    <!-- Tailwind CSS CDN for basic styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* Matches Python app background */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+            width: 100%;
+            max-width: 900px; /* Limit width for better readability */
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .map-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+        }
+        .map-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden; /* Hide any overflow from the map image */
+            border-radius: 8px; /* Rounded corners for map image */
+            border: 1px solid #e2e8f0; /* Light border around map */
+            position: relative; /* Needed for absolute positioning of loading overlay and selection rect */
+            min-height: 350px; /* Minimum height to prevent collapse if image loads slowly */
+            cursor: grab; /* Indicate map is draggable/selectable */
+            width: 100%; /* Ensure it takes full width of its column */
+            user-select: none; /* Prevent text selection during drag */
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+        }
+        .map-image {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            pointer-events: none; /* Make image ignore mouse events so overlay handles them */
+        }
+        .info-panel {
+            border: 1px solid #cbd5e0;
+            border-radius: 8px;
+            padding: 15px;
+            background-color: #f8fafc;
+        }
+        .info-panel h3 {
+            font-size: 1.125rem; /* text-lg */
+            font-weight: 700; /* font-bold */
+            margin-bottom: 10px;
+        }
+        .label {
+            font-size: 0.95rem; /* text-sm slightly larger */
+            margin-bottom: 5px;
+            color: #4a5568; /* gray-700 */
+        }
+        .label-value {
+            font-weight: 500; /* Medium font weight */
+            color: #2d3748; /* gray-800 */
+        }
+        /* Loading indicator styles */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            border-radius: 8px;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Selection Rectangle */
+        #selectionRect {
+            position: absolute;
+            border: 2px dashed #007bff; /* Blue dashed border */
+            background-color: rgba(0, 123, 255, 0.2); /* Semi-transparent blue fill */
+            pointer-events: none; /* Allow clicks to pass through to the map container */
+            z-index: 5;
+            box-sizing: border-box; /* Include padding and border in the element's total width and height */
+        }
+
+        /* Controls (Reset View) */
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .control-button {
+            padding: 8px 15px;
+            background-color: #007bff; /* Blue */
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+        }
+        .control-button:hover {
+            background-color: #0056b3;
+        }
+        .control-button:active {
+            background-color: #004085;
+            transform: translateY(1px);
+        }
+
+
+        /* Responsive adjustments */
+        @media (min-width: 768px) {
+            .container {
+                flex-direction: row; /* Side-by-side for larger screens */
+            }
+            .map-column, .info-column {
+                flex: 1; /* Distribute space equally */
+            }
+            .info-column {
+                margin-left: 20px; /* Add space between map and info */
+            }
+            .map-section {
+                width: auto; /* Allow map section to scale naturally */
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col items-center p-5">
+    <div class="container bg-white rounded-xl shadow-lg p-6 mb-5 md:flex md:flex-row relative">
+        <div class="map-column md:w-2/3 relative">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4 text-center">World Map (Drag to Zoom, Click to Select)</h2>
+            <div class="map-section">
+                <div id="mapContainer" class="map-container">
+                    <!-- The transparent rectangle for selection feedback -->
+                    <div id="selectionRect" style="display: none;"></div>
+                    <!-- initial_map_url is passed from Flask backend -->
+                    <img id="worldMapImage" src="{{ initial_map_url }}" alt="World Map" class="map-image">
+                    <div id="loadingOverlay" class="loading-overlay hidden">
+                        <div class="loader"></div>
+                    </div>
+                </div>
+                <div class="controls">
+                    <button id="resetViewButton" class="control-button">Reset View</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-column md:w-1/3 md:ml-6 mt-6 md:mt-0">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4 text-center">Country Information</h2>
+
+            <div id="countryInfoPanel" class="info-panel">
+                <h3 class="text-lg font-bold text-gray-800 mb-2">Selected Country: <span id="selectedCountryName" class="label-value">None</span></h3>
+                <p class="label">Allies: <span id="alliesList" class="label-value">None listed</span></p>
+                <p class="label">Enemies: <span id="enemiesList" class="label-value">None listed</span></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const selectedCountryName = document.getElementById('selectedCountryName');
+            const alliesList = document.getElementById('alliesList');
+            const enemiesList = document.getElementById('enemiesList');
+            const worldMapImage = document.getElementById('worldMapImage');
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const mapContainer = document.getElementById('mapContainer');
+            const selectionRect = document.getElementById('selectionRect');
+            const resetViewButton = document.getElementById('resetViewButton');
+
+            let isDragging = false;
+            let startX, startY;
+            const dragThreshold = 5; // Pixels to distinguish click from drag
+
+            // Function to fetch and update map/info
+            async function updateMapAndInfo(endpoint, payload = {}) {
+                loadingOverlay.classList.remove('hidden'); // Show loading indicator
+
+                try {
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(payload),
+                    });
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    selectedCountryName.textContent = data.name || 'None'; // Ensure it doesn't show 'None listed' here
+                    alliesList.textContent = data.allies && data.allies.length > 0 ? data.allies.join(', ') : 'None listed';
+                    enemiesList.textContent = data.enemies && data.enemies.length > 0 ? data.enemies.join(', ') : 'None listed';
+                    
+                    worldMapImage.src = data.map_url;
+                    worldMapImage.onload = () => {
+                        loadingOverlay.classList.add('hidden');
+                    };
+                    worldMapImage.onerror = () => {
+                        loadingOverlay.classList.add('hidden');
+                        console.error('Failed to load new map image.');
+                    };
+                } catch (error) {
+                    console.error('Error:', error);
+                    selectedCountryName.textContent = 'Error loading country';
+                    alliesList.textContent = 'Error loading allies';
+                    enemiesList.textContent = 'Error loading enemies';
+                    loadingOverlay.classList.add('hidden');
+                }
+            }
+
+            // Mouse down event for starting selection or click
+            mapContainer.addEventListener('mousedown', function(event) {
+                isDragging = true;
+                startX = event.clientX - mapContainer.getBoundingClientRect().left;
+                startY = event.clientY - mapContainer.getBoundingClientRect().top;
+
+                // Reset selection rectangle style
+                selectionRect.style.left = `${startX}px`;
+                selectionRect.style.top = `${startY}px`;
+                selectionRect.style.width = '0px';
+                selectionRect.style.height = '0px';
+                selectionRect.style.display = 'block'; // Show the rectangle
+                mapContainer.style.cursor = 'grabbing'; // Change cursor to indicate dragging
+            });
+
+            // Mouse move event for drawing selection rectangle
+            mapContainer.addEventListener('mousemove', function(event) {
+                if (!isDragging) return;
+
+                const currentX = event.clientX - mapContainer.getBoundingClientRect().left;
+                const currentY = event.clientY - mapContainer.getBoundingClientRect().top;
+
+                const width = Math.abs(currentX - startX);
+                const height = Math.abs(currentY - startY);
+                const left = Math.min(startX, currentX);
+                const top = Math.min(startY, currentY);
+
+                selectionRect.style.left = `${left}px`;
+                selectionRect.style.top = `${top}px`;
+                selectionRect.style.width = `${width}px`;
+                selectionRect.style.height = `${height}px`;
+            });
+
+            // Mouse up event for finishing selection or click
+            mapContainer.addEventListener('mouseup', function(event) {
+                isDragging = false;
+                selectionRect.style.display = 'none'; // Hide the rectangle
+                mapContainer.style.cursor = 'grab'; // Reset cursor
+
+                const endX = event.clientX - mapContainer.getBoundingClientRect().left;
+                const endY = event.clientY - mapContainer.getBoundingClientRect().top;
+
+                const deltaX = Math.abs(endX - startX);
+                const deltaY = Math.abs(endY - startY);
+
+                // Determine if it was a click or a drag
+                if (deltaX < dragThreshold && deltaY < dragThreshold) {
+                    // It was a click (for country selection or resetting on ocean click)
+                    const imgWidth = worldMapImage.offsetWidth;
+                    const imgHeight = worldMapImage.offsetHeight;
+
+                    updateMapAndInfo('/click_map', {
+                        x: startX, // Use startX/Y for click location
+                        y: startY,
+                        img_width: imgWidth,
+                        img_height: imgHeight
+                    });
+                } else {
+                    // It was a drag (for zooming to a rectangle)
+                    const imgWidth = worldMapImage.offsetWidth;
+                    const imgHeight = worldMapImage.offsetHeight;
+
+                    // Calculate actual top-left and bottom-right of the drawn rectangle
+                    const rectLeft = Math.min(startX, endX);
+                    const rectTop = Math.min(startY, endY);
+                    const rectRight = Math.max(startX, endX);
+                    const rectBottom = Math.max(startY, endY);
+
+                    updateMapAndInfo('/zoom_to_rect', {
+                        x1: rectLeft,
+                        y1: rectTop,
+                        x2: rectRight,
+                        y2: rectBottom,
+                        img_width: imgWidth,
+                        img_height: imgHeight
+                    });
+                }
+            });
+
+            // Reset View button listener
+            resetViewButton.addEventListener('click', function() {
+                updateMapAndInfo('/reset_view'); // Send a request to reset map
+            });
+
+            // Initial map load to ensure info is cleared when page first loads if map isn't clicked
+            selectedCountryName.textContent = 'None';
+            alliesList.textContent = 'None listed';
+            enemiesList.textContent = 'None listed';
+        });
+    </script>
+</body>
+</html>
